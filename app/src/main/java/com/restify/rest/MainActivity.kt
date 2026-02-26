@@ -102,10 +102,19 @@ fun MainScreen(viewModel: MainViewModel) {
             Modifier.padding(innerPadding)
         ) {
             composable(Screen.Orders.route) {
-                OrdersScreen(viewModel)
+                // Исправлено: заменено OrdersScreen на PartnerDashboardScreen
+                PartnerDashboardScreen(viewModel)
             }
             composable(Screen.CreateOrder.route) {
-                CreateOrderScreen(viewModel)
+                // Исправлено: добавлен обязательный колбэк onOrderCreated
+                CreateOrderScreen(
+                    viewModel = viewModel,
+                    onOrderCreated = {
+                        navController.navigate(Screen.Orders.route) {
+                            popUpTo(Screen.Orders.route) { inclusive = true }
+                        }
+                    }
+                )
             }
         }
     }
