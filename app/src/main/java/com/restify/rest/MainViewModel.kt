@@ -9,21 +9,36 @@ import kotlinx.coroutines.launch
 
 class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
 
-    // Состояние списка заказов
+    private val _isLoggedIn = MutableStateFlow(false)
+    val isLoggedIn: StateFlow<Boolean> = _isLoggedIn
+
     private val _orders = MutableStateFlow<List<PartnerOrder>>(emptyList())
     val orders: StateFlow<List<PartnerOrder>> = _orders
 
-    // Состояние загрузки
     val isLoading = mutableStateOf(false)
-
-    // Состояние ошибок
     val errorMessage = mutableStateOf<String?>(null)
 
-    init {
-        fetchOrders()
+    fun login(email: String, pass: String, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            isLoading.value = true
+            errorMessage.value = null
+            try {
+                val response = api.login(email, pass)
+                if (response.isSuccessful) {
+                    _isLoggedIn.value = true
+                    fetchOrders()
+                    onSuccess()
+                } else {
+                    errorMessage.value = "Невірний логін або пароль"
+                }
+            } catch (e: Exception) {
+                errorMessage.value = "Помилка мережі: ${e.message}"
+            } finally {
+                isLoading.value = false
+            }
+        }
     }
 
-    // Загрузка заказов заведения
     fun fetchOrders() {
         viewModelScope.launch {
             isLoading.value = true
@@ -33,34 +48,30 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
                     _orders.value = response.body() ?: emptyList()
                     errorMessage.value = null
                 } else {
-                    errorMessage.value = "Ошибка загрузки: ${response.code()}"
+                    errorMessage.value = "Помилка завантаження: ${response.code()}"
                 }
             } catch (e: Exception) {
-                errorMessage.value = "Ошибка сети: ${e.message}"
+                errorMessage.value = "Помилка мережі: ${e.message}"
             } finally {
                 isLoading.value = false
             }
         }
     }
 
-    // Отметка заказа как "Готов" (уведомляет курьера)
     fun markOrderAsReady(jobId: Int) {
         viewModelScope.launch {
             try {
                 val response = api.markAsReady(jobId)
-                if (response.isSuccessful) {
-                    // Обновляем список локально или запрашиваем заново
-                    fetchOrders()
-                }
+                if (response.isSuccessful) fetchOrders()
             } catch (e: Exception) {
-                errorMessage.value = "Не удалось обновить статус"
+                errorMessage.value = "Не вдалося оновити статус"
             }
         }
     }
 
-    // Логика создания нового заказа
     fun createNewOrder(request: OrderCreateRequest, onSuccess: () -> Unit) {
         viewModelScope.launch {
+            isLoading.value = true
             try {
                 val response = api.createOrder(
                     address = request.address,
@@ -74,11 +85,14 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
                 if (response.isSuccessful) {
                     fetchOrders()
                     onSuccess()
+                    errorMessage.value = null
                 } else {
-                    errorMessage.value = "Ошибка при создании заказа"
+                    errorMessage.value = "Помилка при створенні замовлення"
                 }
             } catch (e: Exception) {
-                errorMessage.value = "Сбой сети"
+                errorMessage.value = "Збій мережі"
+            } finally {
+                isLoading.value = false
             }
         }
     }

@@ -9,19 +9,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.*
 import com.restify.rest.ui.theme.RestTheme
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -30,63 +31,86 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 1. Настройка Retrofit
+        // Вызов метода host() со скобками для совместимости с OkHttp 3
+        val cookieJar = object : CookieJar {
+            private val cookieStore = HashMap<String, List<Cookie>>()
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                cookieStore[url.host()] = cookies
+            }
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                return cookieStore[url.host()] ?: ArrayList()
+            }
+        }
+
+        val client = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .build()
+
         val retrofit = Retrofit.Builder()
             .baseUrl("https://restify.site")
+            .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
 
         val api = retrofit.create(RestPartnerApi::class.java)
 
-        // 2. Создание фабрики для ViewModel, чтобы передать в неё api
         val viewModelFactory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
-                    return MainViewModel(api) as T
-                }
-                throw IllegalArgumentException("Unknown ViewModel class")
+                return MainViewModel(api) as T
             }
         }
 
         setContent {
             RestTheme {
-                // Передаем фабрику в метод viewModel()
                 val viewModel: MainViewModel = viewModel(factory = viewModelFactory)
-                MainScreen(viewModel)
+                MainAppScreen(viewModel)
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
+fun MainAppScreen(viewModel: MainViewModel) {
     val navController = rememberNavController()
-    val items = listOf(
-        Screen.Orders,
-        Screen.CreateOrder
-    )
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("DAYBERG Партнер", fontWeight = FontWeight.Bold) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            )
+        },
         bottomBar = {
-            NavigationBar {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentDestination = navBackStackEntry?.destination
-                items.forEach { screen ->
+            if (isLoggedIn) {
+                NavigationBar {
+                    val navBackStackEntry by navController.currentBackStackEntryAsState()
+                    val currentDestination = navBackStackEntry?.destination
+
                     NavigationBarItem(
-                        icon = {
-                            Icon(
-                                if (screen == Screen.Orders) Icons.Default.List else Icons.Default.Add,
-                                contentDescription = null
-                            )
-                        },
-                        label = { Text(screen.route) },
-                        selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                        icon = { Icon(Icons.Default.List, contentDescription = "Замовлення") },
+                        label = { Text("Замовлення") },
+                        selected = currentDestination?.hierarchy?.any { it.route == "orders" } == true,
                         onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
+                            navController.navigate("orders") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Add, contentDescription = "Нова доставка") },
+                        label = { Text("Нова доставка") },
+                        selected = currentDestination?.hierarchy?.any { it.route == "create_order" } == true,
+                        onClick = {
+                            navController.navigate("create_order") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -97,30 +121,27 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     ) { innerPadding ->
         NavHost(
-            navController,
-            startDestination = Screen.Orders.route,
-            Modifier.padding(innerPadding)
+            navController = navController,
+            startDestination = if (isLoggedIn) "orders" else "login",
+            modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Screen.Orders.route) {
-                // Исправлено: заменено OrdersScreen на PartnerDashboardScreen
+            composable("login") {
+                LoginScreen(viewModel) {
+                    navController.navigate("orders") {
+                        popUpTo("login") { inclusive = true }
+                    }
+                }
+            }
+            composable("orders") {
                 PartnerDashboardScreen(viewModel)
             }
-            composable(Screen.CreateOrder.route) {
-                // Исправлено: добавлен обязательный колбэк onOrderCreated
-                CreateOrderScreen(
-                    viewModel = viewModel,
-                    onOrderCreated = {
-                        navController.navigate(Screen.Orders.route) {
-                            popUpTo(Screen.Orders.route) { inclusive = true }
-                        }
+            composable("create_order") {
+                CreateOrderScreen(viewModel) {
+                    navController.navigate("orders") {
+                        popUpTo("orders") { inclusive = true }
                     }
-                )
+                }
             }
         }
     }
-}
-
-sealed class Screen(val route: String) {
-    object Orders : Screen("Orders")
-    object CreateOrder : Screen("Create")
 }
