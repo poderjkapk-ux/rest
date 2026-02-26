@@ -1,10 +1,12 @@
 // Top-level build file
 plugins {
-    // Указываем версии всех плагинов в одном месте
-    id("com.android.application") version "8.2.2" apply false
-    id("com.android.library") version "8.2.2" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+    // Используем alias из каталога libs.versions.toml
+    alias(libs.plugins.android.application) apply false
+    id("com.android.library") version "9.0.1" apply false
 
-    // Плагин Google Services для работы Firebase в проекте rest
+    // Вместо id(...).version(...) используем централизованную версию
+    alias(libs.plugins.kotlin.compose) apply false
+
+    // Google services
     id("com.google.gms.google-services") version "4.4.1" apply false
 }
