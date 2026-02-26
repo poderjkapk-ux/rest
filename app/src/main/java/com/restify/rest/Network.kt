@@ -33,6 +33,23 @@ data class OrderCreateRequest(
     val isReturnRequired: Boolean
 )
 
+// --- НОВІ МОДЕЛІ ДЛЯ ЧАТУ ТА ТРЕКІНГУ ---
+
+data class ChatMessage(
+    val role: String, // 'partner' або 'courier'
+    val text: String,
+    val time: String
+)
+
+data class TrackCourierResponse(
+    val status: String, // "ok" або "waiting", "error"
+    val lat: Double?,
+    val lon: Double?,
+    val name: String?,
+    val phone: String?,
+    @SerializedName("job_status") val jobStatus: String?
+)
+
 // Интерфейс API для заведения
 interface RestPartnerApi {
 
@@ -69,5 +86,24 @@ interface RestPartnerApi {
         @Field("rating") rating: Int,
         @Field("review") review: String
     ): Response<Unit>
-}
 
+    // --- НОВІ ЕНДПОІНТИ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
+
+    @GET("/api/chat/history/{job_id}")
+    suspend fun getChatHistory(
+        @Path("job_id") jobId: Int
+    ): Response<List<ChatMessage>>
+
+    @FormUrlEncoded
+    @POST("/api/chat/send")
+    suspend fun sendChatMessage(
+        @Field("job_id") jobId: Int,
+        @Field("message") message: String,
+        @Field("role") role: String = "partner" // Завжди відправляємо як заклад
+    ): Response<Unit>
+
+    @GET("/api/partner/track_courier/{job_id}")
+    suspend fun trackCourier(
+        @Path("job_id") jobId: Int
+    ): Response<TrackCourierResponse>
+}

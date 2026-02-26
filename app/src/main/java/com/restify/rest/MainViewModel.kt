@@ -15,6 +15,10 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
     private val _orders = MutableStateFlow<List<PartnerOrder>>(emptyList())
     val orders: StateFlow<List<PartnerOrder>> = _orders
 
+    // Стейт для збереження історії чату конкретного замовлення
+    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages
+
     val isLoading = mutableStateOf(false)
     val errorMessage = mutableStateOf<String?>(null)
 
@@ -93,6 +97,77 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
                 errorMessage.value = "Збій мережі"
             } finally {
                 isLoading.value = false
+            }
+        }
+    }
+
+    // --- НОВІ ФУНКЦІЇ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
+
+    fun loadChatHistory(jobId: Int) {
+        viewModelScope.launch {
+            try {
+                val response = api.getChatHistory(jobId)
+                if (response.isSuccessful) {
+                    _chatMessages.value = response.body() ?: emptyList()
+                }
+            } catch (e: Exception) {
+                errorMessage.value = "Помилка завантаження чату"
+            }
+        }
+    }
+
+    fun clearChat() {
+        _chatMessages.value = emptyList()
+    }
+
+    fun sendMessage(jobId: Int, message: String) {
+        viewModelScope.launch {
+            try {
+                // Відправляємо повідомлення на сервер
+                val response = api.sendChatMessage(jobId, message)
+                if (response.isSuccessful) {
+                    // Оновлюємо історію чату, щоб побачити нове повідомлення
+                    loadChatHistory(jobId)
+                } else {
+                    errorMessage.value = "Не вдалося відправити повідомлення"
+                }
+            } catch (e: Exception) {
+                errorMessage.value = "Помилка мережі при відправці"
+            }
+        }
+    }
+
+    fun rateCourier(jobId: Int, rating: Int, review: String) {
+        viewModelScope.launch {
+            try {
+                val response = api.rateCourier(jobId, rating, review)
+                if (response.isSuccessful) {
+                    fetchOrders() // Оновлюємо список, щоб прибрати кнопку "Оцінити"
+                } else {
+                    errorMessage.value = "Помилка при відправці оцінки"
+                }
+            } catch (e: Exception) {
+                errorMessage.value = "Помилка мережі"
+            }
+        }
+    }
+
+    fun trackCourier(jobId: Int, onSuccess: (lat: Double, lon: Double) -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val response = api.trackCourier(jobId)
+                if (response.isSuccessful) {
+                    val trackData = response.body()
+                    if (trackData != null && trackData.status == "ok" && trackData.lat != null && trackData.lon != null) {
+                        onSuccess(trackData.lat, trackData.lon)
+                    } else {
+                        onError("Кур'єр ще не призначений або координати недоступні")
+                    }
+                } else {
+                    onError("Помилка сервера")
+                }
+            } catch (e: Exception) {
+                onError("Помилка мережі")
             }
         }
     }
