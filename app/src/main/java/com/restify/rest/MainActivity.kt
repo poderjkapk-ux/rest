@@ -36,22 +36,18 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
-// Експортуємо об'єкт RetrofitClient, щоб він був доступний у MyFirebaseMessagingService
-object RetrofitClient {
-    lateinit var apiService: RestPartnerApi
-}
-
 class MainActivity : ComponentActivity() {
 
+    // Зберігаємо інстанс ViewModel на рівні Activity
     private lateinit var viewModel: MainViewModel
 
-    // Ресивер для автоматичного оновлення UI при отриманні пуш-сповіщення
-    private val updateReceiver = object : BroadcastReceiver() {
+    // Ресівер для автоматичного оновлення замовлень при отриманні пуша
+    private val orderUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.restify.rest.UPDATE_ORDERS") {
-                Log.d("MainActivity", "Отримано сигнал на оновлення замовлень")
+                Log.d("MainActivity", "Отримано сигнал для оновлення замовлень")
                 if (::viewModel.isInitialized) {
-                    viewModel.fetchOrders() // Оновлюємо список
+                    viewModel.fetchOrders()
                 }
             }
         }
@@ -85,7 +81,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Створюємо OkHttpClient
         val client = OkHttpClient.Builder()
             .cookieJar(cookieJar)
             .build()
@@ -98,54 +93,18 @@ class MainActivity : ComponentActivity() {
 
         val api = retrofit.create(RestPartnerApi::class.java)
 
-        // Ініціалізуємо глобальний RetrofitClient
-        RetrofitClient.apiService = api
-
         val viewModelFactory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                // ДОДАНО: Передаємо `client` у MainViewModel для роботи WebSocket
-                return MainViewModel(api, client) as T
+                return MainViewModel(api) as T
             }
         }
 
-        // Отримуємо ViewModel
+        // Ініціалізуємо ViewModel на рівні Activity
         viewModel = ViewModelProvider(this, viewModelFactory)[MainViewModel::class.java]
 
-        // Отримуємо FCM токен поточного пристрою та зберігаємо його
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (!task.isSuccessful) {
-                Log.w("MainActivity", "Не вдалося отримати FCM токен", task.exception)
-                return@addOnCompleteListener
-            }
-            val token = task.result
-            Log.d("MainActivity", "Ваш FCM Token: $token")
-
-            // Зберігаємо токен локально
-            val sharedPref = getSharedPreferences("PartnerPrefs", Context.MODE_PRIVATE)
-            sharedPref.edit().putString("pending_fcm_token", token).apply()
-
-            // Якщо кукі вже є (ми залогінені), відправляємо токен на сервер
-            val cookie = sharedPref.getString("cookie", null)
-            if (cookie != null) {
-                viewModel.sendFcmToken(cookie, token)
-            }
-        }
-
-        // ДОДАНО: Підключаємо WebSocket, якщо користувач вже авторизований при старті додатку
-        val sharedPref = getSharedPreferences("PartnerPrefs", Context.MODE_PRIVATE)
-        val cookie = sharedPref.getString("cookie", null)
-        if (cookie != null) {
-            viewModel.connectWebSocket()
-        }
-
-        // Реєструємо BroadcastReceiver для прослуховування оновлень
-        val filter = IntentFilter("com.restify.rest.UPDATE_ORDERS")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(updateReceiver, filter)
-        }
+        // Відправляємо FCM токен, якщо користувач вже має сесію (наприклад, при повторному відкритті додатку)
+        sendFcmTokenIfPossible()
 
         setContent {
             RestTheme {
@@ -154,25 +113,49 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        // Обов'язково знімаємо реєстрацію ресивера, щоб уникнути витоків пам'яті
-        unregisterReceiver(updateReceiver)
+    override fun onStart() {
+        super.onStart()
+        // Реєструємо BroadcastReceiver для прослуховування сигналів оновлення
+        val filter = IntentFilter("com.restify.rest.UPDATE_ORDERS")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(orderUpdateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(orderUpdateReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Обов'язково відписуємося від ресівера, щоб уникнути витоку пам'яті
+        unregisterReceiver(orderUpdateReceiver)
     }
 
     private fun askNotificationPermission() {
-        // Для Android 13 (API Level 33) і вище потрібно явно запитувати дозвіл
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
             ) {
                 // Дозвіл вже є
             } else if (shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
-                // Можна показати діалог-пояснення, чому потрібні сповіщення (для чату)
                 requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else {
-                // Прямий запит дозволу
                 requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    private fun sendFcmTokenIfPossible() {
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                Log.w("MainActivity", "Не вдалося отримати FCM токен", task.exception)
+                return@addOnCompleteListener
+            }
+            val token = task.result
+            Log.d("MainActivity", "Ваш FCM Token: $token")
+
+            // Відправляємо на бекенд
+            if (::viewModel.isInitialized) {
+                viewModel.updateFcmToken(token)
             }
         }
     }
@@ -235,6 +218,13 @@ fun MainAppScreen(viewModel: MainViewModel) {
         ) {
             composable("login") {
                 LoginScreen(viewModel) {
+                    // Після успішного логіну обов'язково отримуємо та відправляємо токен на сервер
+                    FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            viewModel.updateFcmToken(task.result)
+                        }
+                    }
+
                     navController.navigate("orders") {
                         popUpTo("login") { inclusive = true }
                     }

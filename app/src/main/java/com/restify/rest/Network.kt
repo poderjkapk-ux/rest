@@ -4,7 +4,7 @@ import com.google.gson.annotations.SerializedName
 import retrofit2.Response
 import retrofit2.http.*
 
-// Моделі даних для закладу (партнера)
+// Модели данных для ресторана
 data class PartnerOrder(
     val id: Int,
     val status: String,
@@ -33,7 +33,7 @@ data class OrderCreateRequest(
     val isReturnRequired: Boolean
 )
 
-// --- НОВІ МОДЕЛІ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
+// --- МОДЕЛІ ДЛЯ ЧАТУ ТА ТРЕКІНГУ ---
 
 data class ChatMessage(
     val role: String, // 'partner' або 'courier'
@@ -50,7 +50,7 @@ data class TrackCourierResponse(
     @SerializedName("job_status") val jobStatus: String?
 )
 
-// Інтерфейс API для закладу
+// Интерфейс API для заведения
 interface RestPartnerApi {
 
     @FormUrlEncoded
@@ -87,7 +87,7 @@ interface RestPartnerApi {
         @Field("review") review: String
     ): Response<Unit>
 
-    // --- НОВІ ЕНДПОІНТИ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
+    // --- ЕНДПОІНТИ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
 
     @GET("/api/chat/history/{job_id}")
     suspend fun getChatHistory(
@@ -107,13 +107,11 @@ interface RestPartnerApi {
         @Path("job_id") jobId: Int
     ): Response<TrackCourierResponse>
 
-    // --- ДОДАНИЙ ЕНДПОІНТ ДЛЯ FCM ТОКЕНА ---
-
+    // --- ЕНДПОІНТ ДЛЯ ВІДПРАВКИ FCM ТОКЕНА ---
+    // Увага: @Field("token") має точно збігатися з параметром на бекенді
     @FormUrlEncoded
     @POST("/api/partner/fcm_token")
     suspend fun sendFcmToken(
-        @Header("Cookie") cookie: String,
-        // ВИПРАВЛЕНО: Змінено "fcm_token" на "token", щоб відповідати моделі бекенду
         @Field("token") token: String
     ): Response<Unit>
 }

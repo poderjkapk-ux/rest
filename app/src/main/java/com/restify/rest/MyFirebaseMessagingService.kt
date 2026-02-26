@@ -10,100 +10,70 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
-    // Вызывается, когда Firebase генерирует новый токен для устройства
+    // Викликається, коли Firebase генерує новий токен для пристрою
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.d("FCM_PARTNER", "Новый токен: $token")
-        sendTokenToServer(token)
+        Log.d("FCM_TOKEN", "Новий токен: $token")
+        // Ми успішно перенесли відправку токена в MainActivity та MainViewModel!
+        // Тому тут ми його просто логуємо, щоб уникнути помилки відсутності RetrofitClient.
     }
 
-    // Обработка входящего пуш-уведомления
+    // Обробка вхідного пуш-сповіщення
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
 
-        // Бэкенд (Python) должен отправлять данные строго в поле `data`
-        val title = remoteMessage.data["title"] ?: "DAYBERG Партнер"
-        val body = remoteMessage.data["body"] ?: "У вас нове сповіщення"
+        // Бекенд відправляє дані у полі `data`
+        val title = remoteMessage.data["title"] ?: remoteMessage.notification?.title ?: "DAYBERG Партнер"
+        val body = remoteMessage.data["body"] ?: remoteMessage.notification?.body ?: "У вас нове сповіщення"
 
-        Log.d("FCM_PARTNER", "Отримано пуш: Title=$title, Body=$body")
+        sendNotification(title, body)
 
-        showNotification(title, body)
-
-        // Отправляем сигнал для автоматического обновления списка заказов в UI (например, в MainActivity)
+        // Відправляємо сигнал для оновлення списку замовлень в UI
         val updateIntent = Intent("com.restify.rest.UPDATE_ORDERS")
-        updateIntent.setPackage(packageName) // Ограничиваем рассылку только нашим приложением ради безопасности
         sendBroadcast(updateIntent)
     }
 
-    // Отправка токена на бэкенд
-    private fun sendTokenToServer(token: String) {
-        // Получаем сохраненные куки (токен авторизации)
-        // ВАЖНО: Убедитесь, что "PartnerPrefs" - это именно то имя, которое вы используете при логине!
-        val sharedPref = getSharedPreferences("PartnerPrefs", Context.MODE_PRIVATE)
-        val cookie = sharedPref.getString("cookie", null)
-
-        if (cookie != null) {
-            // Если пользователь авторизован, отправляем токен на сервер в фоновом потоке
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    // ВАЖНО: Замените RetrofitClient.apiService на ваш объект Retrofit, если он называется иначе
-                    RetrofitClient.apiService.sendFcmToken(cookie, token)
-                    Log.d("FCM_PARTNER", "Токен успішно відправлено на сервер")
-                } catch (e: Exception) {
-                    Log.e("FCM_PARTNER", "Помилка відправки токена: ${e.message}")
-                }
-            }
-        } else {
-            // Если пользователь еще не авторизован, сохраняем токен локально.
-            // При успешном логине в будущем, вы сможете прочитать его отсюда и отправить на сервер.
-            sharedPref.edit().putString("pending_fcm_token", token).apply()
-        }
-    }
-
-    // Создание и показ системного уведомления Android
-    private fun showNotification(title: String, message: String) {
-        val channelId = "partner_push_channel"
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        // Для Android 8.0 (API 26) и выше обязательно нужен NotificationChannel
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Сповіщення для ресторанів",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Сповіщення про статуси замовлень та нові повідомлення"
-            }
-            notificationManager.createNotificationChannel(channel)
-        }
-
+    // Створення та показ системного сповіщення Android
+    private fun sendNotification(title: String, messageBody: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
 
-        // FLAG_IMMUTABLE обязателен для современных версий Android (API 31+)
+        // PendingIntent для відкриття додатку по кліку на сповіщення
         val pendingIntent = PendingIntent.getActivity(
             this,
-            0,
+            0 /* Request code */,
             intent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
         )
 
+        val channelId = "partner_notifications"
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.mipmap.ic_launcher) // Иконка уведомления (замените на нужную, если требуется)
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // Рекомендується замінити на іконку додатку, наприклад R.mipmap.ic_launcher
             .setContentTitle(title)
-            .setContentText(message)
-            .setAutoCancel(true) // Уведомление закрывается при нажатии
-            .setPriority(NotificationCompat.PRIORITY_HIGH) // Высокий приоритет для всплывающих пушей
+            .setContentText(messageBody)
+            .setAutoCancel(true) // Сповіщення зникне після кліку
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
 
-        // Генерируем уникальный ID на основе времени, чтобы новые пуши не перезаписывали старые
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Для Android 8.0 (API 26) і вище обов'язково потрібен NotificationChannel
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Замовлення та Чат",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Сповіщення про статуси замовлень та повідомлення від кур'єрів"
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        // Генеруємо унікальний ID, щоб сповіщення не перекривали одне одного
         val notificationId = System.currentTimeMillis().toInt()
         notificationManager.notify(notificationId, notificationBuilder.build())
     }
