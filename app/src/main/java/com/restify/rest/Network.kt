@@ -106,4 +106,13 @@ interface RestPartnerApi {
     suspend fun trackCourier(
         @Path("job_id") jobId: Int
     ): Response<TrackCourierResponse>
+
+    // --- ДОБАВЛЕННЫЙ ЭНДПОИНТ ДЛЯ FCM ТОКЕНА ---
+
+    @FormUrlEncoded
+    @POST("/api/partner/fcm_token")
+    suspend fun sendFcmToken(
+        @Header("Cookie") cookie: String,
+        @Field("fcm_token") token: String
+    ): Response<Unit>
 }

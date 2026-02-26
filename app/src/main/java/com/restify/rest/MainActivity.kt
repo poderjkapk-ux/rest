@@ -1,6 +1,10 @@
 package com.restify.rest
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -33,7 +37,26 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
+// Експортуємо об'єкт RetrofitClient, щоб він був доступний у MyFirebaseMessagingService
+object RetrofitClient {
+    lateinit var apiService: RestPartnerApi
+}
+
 class MainActivity : ComponentActivity() {
+
+    private lateinit var viewModel: MainViewModel
+
+    // Ресивер для автоматичного оновлення UI при отриманні пуш-сповіщення
+    private val updateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.restify.rest.UPDATE_ORDERS") {
+                Log.d("MainActivity", "Отримано сигнал на оновлення замовлень")
+                if (::viewModel.isInitialized) {
+                    viewModel.fetchOrders() // Оновлюємо список
+                }
+            }
+        }
+    }
 
     // Ланчер для запиту дозволу на сповіщення (Android 13+)
     private val requestPermissionLauncher = registerForActivityResult(
@@ -52,18 +75,6 @@ class MainActivity : ComponentActivity() {
 
         // Запитуємо дозвіл на показ пуш-сповіщень
         askNotificationPermission()
-
-        // Отримуємо FCM токен поточного пристрою
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (!task.isSuccessful) {
-                Log.w("MainActivity", "Не вдалося отримати FCM токен", task.exception)
-                return@addOnCompleteListener
-            }
-            val token = task.result
-            Log.d("MainActivity", "Ваш FCM Token: $token")
-            // TODO: У майбутньому можна передати цей токен у MainViewModel
-            // та відправити на бекенд (POST /api/partner/fcm_token) після успішного логіну
-        }
 
         val cookieJar = object : CookieJar {
             private val cookieStore = HashMap<String, List<Cookie>>()
@@ -87,6 +98,9 @@ class MainActivity : ComponentActivity() {
 
         val api = retrofit.create(RestPartnerApi::class.java)
 
+        // Ініціалізуємо глобальний RetrofitClient
+        RetrofitClient.apiService = api
+
         val viewModelFactory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -94,12 +108,48 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Отримуємо ViewModel
+        viewModel = ViewModelProvider(this, viewModelFactory)[MainViewModel::class.java]
+
+        // Отримуємо FCM токен поточного пристрою та зберігаємо його
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                Log.w("MainActivity", "Не вдалося отримати FCM токен", task.exception)
+                return@addOnCompleteListener
+            }
+            val token = task.result
+            Log.d("MainActivity", "Ваш FCM Token: $token")
+
+            // Зберігаємо токен локально. Якщо ми вже авторизовані, можна його одразу відправити
+            val sharedPref = getSharedPreferences("PartnerPrefs", Context.MODE_PRIVATE)
+            sharedPref.edit().putString("pending_fcm_token", token).apply()
+
+            // Якщо кукі вже є (ми залогінені), відправляємо токен на сервер
+            val cookie = sharedPref.getString("cookie", null)
+            if (cookie != null) {
+                viewModel.sendFcmToken(cookie, token)
+            }
+        }
+
+        // Реєструємо BroadcastReceiver для прослуховування оновлень
+        val filter = IntentFilter("com.restify.rest.UPDATE_ORDERS")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(updateReceiver, filter)
+        }
+
         setContent {
             RestTheme {
-                val viewModel: MainViewModel = viewModel(factory = viewModelFactory)
                 MainAppScreen(viewModel)
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Обов'язково знімаємо реєстрацію ресивера, щоб уникнути витоків пам'яті
+        unregisterReceiver(updateReceiver)
     }
 
     private fun askNotificationPermission() {

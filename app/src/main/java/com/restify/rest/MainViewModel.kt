@@ -1,5 +1,6 @@
 package com.restify.rest
 
+import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -174,6 +175,23 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
                 }
             } catch (e: Exception) {
                 onError("Помилка мережі")
+            }
+        }
+    }
+
+    // --- ДОДАНА ФУНКЦІЯ ДЛЯ ВІДПРАВКИ FCM ТОКЕНА ---
+
+    fun sendFcmToken(cookie: String, token: String) {
+        viewModelScope.launch {
+            try {
+                val response = api.sendFcmToken(cookie, token)
+                if (response.isSuccessful) {
+                    Log.d("MainViewModel", "FCM токен успішно відправлено на сервер при старті")
+                } else {
+                    Log.e("MainViewModel", "Помилка відправки токена (код: ${response.code()})")
+                }
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Помилка відправки FCM токена: ${e.message}")
             }
         }
     }
