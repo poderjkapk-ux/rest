@@ -32,6 +32,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val body = remoteMessage.data["body"] ?: remoteMessage.notification?.body ?: "У вас нове сповіщення"
 
         sendNotification(title, body)
+
+        // Відправляємо сигнал для оновлення списку замовлень в UI
+        val updateIntent = Intent("com.restify.rest.UPDATE_ORDERS")
+        sendBroadcast(updateIntent)
     }
 
     // Створення та показ системного сповіщення Android

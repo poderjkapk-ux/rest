@@ -19,6 +19,10 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
     private val _chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages
 
+    // Стейт для миттєвого приховування кнопки оцінки після натискання
+    private val _ratedOrders = MutableStateFlow<Set<Int>>(emptySet())
+    val ratedOrders: StateFlow<Set<Int>> = _ratedOrders
+
     val isLoading = mutableStateOf(false)
     val errorMessage = mutableStateOf<String?>(null)
 
@@ -142,7 +146,9 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
             try {
                 val response = api.rateCourier(jobId, rating, review)
                 if (response.isSuccessful) {
-                    fetchOrders() // Оновлюємо список, щоб прибрати кнопку "Оцінити"
+                    // Миттєво приховуємо кнопку, додаючи ID замовлення в локальний стейт
+                    _ratedOrders.value = _ratedOrders.value + jobId
+                    fetchOrders() // Оновлюємо список
                 } else {
                     errorMessage.value = "Помилка при відправці оцінки"
                 }
