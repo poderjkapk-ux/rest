@@ -4,7 +4,7 @@ import com.google.gson.annotations.SerializedName
 import retrofit2.Response
 import retrofit2.http.*
 
-// Модели данных для ресторана
+// Моделі даних для закладу (партнера)
 data class PartnerOrder(
     val id: Int,
     val status: String,
@@ -33,7 +33,7 @@ data class OrderCreateRequest(
     val isReturnRequired: Boolean
 )
 
-// --- НОВІ МОДЕЛІ ДЛЯ ЧАТУ ТА ТРЕКІНГУ ---
+// --- НОВІ МОДЕЛІ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
 
 data class ChatMessage(
     val role: String, // 'partner' або 'courier'
@@ -50,7 +50,7 @@ data class TrackCourierResponse(
     @SerializedName("job_status") val jobStatus: String?
 )
 
-// Интерфейс API для заведения
+// Інтерфейс API для закладу
 interface RestPartnerApi {
 
     @FormUrlEncoded
@@ -107,12 +107,13 @@ interface RestPartnerApi {
         @Path("job_id") jobId: Int
     ): Response<TrackCourierResponse>
 
-    // --- ДОБАВЛЕННЫЙ ЭНДПОИНТ ДЛЯ FCM ТОКЕНА ---
+    // --- ДОДАНИЙ ЕНДПОІНТ ДЛЯ FCM ТОКЕНА ---
 
     @FormUrlEncoded
     @POST("/api/partner/fcm_token")
     suspend fun sendFcmToken(
         @Header("Cookie") cookie: String,
-        @Field("fcm_token") token: String
+        // ВИПРАВЛЕНО: Змінено "fcm_token" на "token", щоб відповідати моделі бекенду
+        @Field("token") token: String
     ): Response<Unit>
 }

@@ -24,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
@@ -86,6 +85,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Створюємо OkHttpClient
         val client = OkHttpClient.Builder()
             .cookieJar(cookieJar)
             .build()
@@ -104,7 +104,8 @@ class MainActivity : ComponentActivity() {
         val viewModelFactory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return MainViewModel(api) as T
+                // ДОДАНО: Передаємо `client` у MainViewModel для роботи WebSocket
+                return MainViewModel(api, client) as T
             }
         }
 
@@ -120,7 +121,7 @@ class MainActivity : ComponentActivity() {
             val token = task.result
             Log.d("MainActivity", "Ваш FCM Token: $token")
 
-            // Зберігаємо токен локально. Якщо ми вже авторизовані, можна його одразу відправити
+            // Зберігаємо токен локально
             val sharedPref = getSharedPreferences("PartnerPrefs", Context.MODE_PRIVATE)
             sharedPref.edit().putString("pending_fcm_token", token).apply()
 
@@ -129,6 +130,13 @@ class MainActivity : ComponentActivity() {
             if (cookie != null) {
                 viewModel.sendFcmToken(cookie, token)
             }
+        }
+
+        // ДОДАНО: Підключаємо WebSocket, якщо користувач вже авторизований при старті додатку
+        val sharedPref = getSharedPreferences("PartnerPrefs", Context.MODE_PRIVATE)
+        val cookie = sharedPref.getString("cookie", null)
+        if (cookie != null) {
+            viewModel.connectWebSocket()
         }
 
         // Реєструємо BroadcastReceiver для прослуховування оновлень

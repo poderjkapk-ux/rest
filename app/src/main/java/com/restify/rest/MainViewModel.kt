@@ -7,8 +7,13 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import okhttp3.*
+import org.json.JSONObject
 
-class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
+class MainViewModel(
+    private val api: RestPartnerApi,
+    private val okHttpClient: OkHttpClient // Додано для WebSocket
+) : ViewModel() {
 
     private val _isLoggedIn = MutableStateFlow(false)
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn
@@ -27,6 +32,72 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
     val isLoading = mutableStateOf(false)
     val errorMessage = mutableStateOf<String?>(null)
 
+    // Змінна для збереження поточного з'єднання WebSocket
+    private var webSocket: WebSocket? = null
+
+    // --- ЛОГІКА WEBSOCKET ---
+
+    fun connectWebSocket() {
+        // Якщо з'єднання вже існує, не створюємо нове
+        if (webSocket != null) return
+
+        val request = Request.Builder()
+            .url("wss://restify.site/ws/partner") // Ендпоінт вашого бекенду
+            .build()
+
+        webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d("WebSocket", "З'єднання встановлено успішно!")
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                Log.d("WebSocket", "Отримано повідомлення: $text")
+                try {
+                    val json = JSONObject(text)
+                    val type = json.optString("type")
+
+                    // Обробляємо події від бекенда
+                    when (type) {
+                        "order_update", "new_order" -> {
+                            // Оновлюємо список замовлень у реальному часі
+                            fetchOrders()
+                        }
+                        "chat_message" -> {
+                            // Якщо ми знаходимось у чаті цього замовлення, оновлюємо його
+                            val jobId = json.optInt("job_id")
+                            loadChatHistory(jobId)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("WebSocket", "Помилка парсингу JSON з WebSocket", e)
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d("WebSocket", "З'єднання закрито: $reason")
+                this@MainViewModel.webSocket = null
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e("WebSocket", "Помилка з'єднання", t)
+                this@MainViewModel.webSocket = null
+            }
+        })
+    }
+
+    fun disconnectWebSocket() {
+        webSocket?.close(1000, "Відключення користувачем")
+        webSocket = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Обов'язково закриваємо з'єднання при знищенні ViewModel
+        disconnectWebSocket()
+    }
+
+    // --- ІСНУЮЧА ЛОГІКА API ---
+
     fun login(email: String, pass: String, onSuccess: () -> Unit) {
         viewModelScope.launch {
             isLoading.value = true
@@ -36,6 +107,7 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
                 if (response.isSuccessful) {
                     _isLoggedIn.value = true
                     fetchOrders()
+                    connectWebSocket() // Підключаємо WebSocket після успішного входу
                     onSuccess()
                 } else {
                     errorMessage.value = "Невірний логін або пароль"
@@ -106,8 +178,6 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
         }
     }
 
-    // --- НОВІ ФУНКЦІЇ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
-
     fun loadChatHistory(jobId: Int) {
         viewModelScope.launch {
             try {
@@ -128,10 +198,8 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
     fun sendMessage(jobId: Int, message: String) {
         viewModelScope.launch {
             try {
-                // Відправляємо повідомлення на сервер
                 val response = api.sendChatMessage(jobId, message)
                 if (response.isSuccessful) {
-                    // Оновлюємо історію чату, щоб побачити нове повідомлення
                     loadChatHistory(jobId)
                 } else {
                     errorMessage.value = "Не вдалося відправити повідомлення"
@@ -147,9 +215,8 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
             try {
                 val response = api.rateCourier(jobId, rating, review)
                 if (response.isSuccessful) {
-                    // Миттєво приховуємо кнопку, додаючи ID замовлення в локальний стейт
                     _ratedOrders.value = _ratedOrders.value + jobId
-                    fetchOrders() // Оновлюємо список
+                    fetchOrders()
                 } else {
                     errorMessage.value = "Помилка при відправці оцінки"
                 }
@@ -178,8 +245,6 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
             }
         }
     }
-
-    // --- ДОДАНА ФУНКЦІЯ ДЛЯ ВІДПРАВКИ FCM ТОКЕНА ---
 
     fun sendFcmToken(cookie: String, token: String) {
         viewModelScope.launch {
