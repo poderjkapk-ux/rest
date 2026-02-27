@@ -5,8 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.preference.PreferenceManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
@@ -40,6 +39,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
 
 @Composable
 fun PartnerDashboardScreen(viewModel: MainViewModel) {
@@ -360,16 +364,28 @@ fun OrderCard(
             if (order.status == "pending") {
                 val interactionSource = remember { MutableInteractionSource() }
                 val isPressed by interactionSource.collectIsPressedAsState()
+
+                // Добавляем состояние загрузки для интерактивности
+                var isBoosting by remember { mutableStateOf(false) }
+
                 val scale by animateFloatAsState(
                     targetValue = if (isPressed) 0.95f else 1.0f,
                     animationSpec = tween(durationMillis = 150),
                     label = "buttonScale"
                 )
 
+                // Сбрасываем крутилку, если заказ обновился (например, его забрали)
+                LaunchedEffect(order) {
+                    isBoosting = false
+                }
+
                 Button(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onBoostClick()
+                        if (!isBoosting) {
+                            isBoosting = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onBoostClick()
+                        }
                     },
                     interactionSource = interactionSource,
                     modifier = Modifier
@@ -384,9 +400,18 @@ fun OrderCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B), contentColor = Color.White),
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp, pressedElevation = 0.dp)
                 ) {
-                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("ПІДНЯТИ ЦІНУ (+10 ГРН)", fontWeight = FontWeight.Bold)
+                    // Показываем индикатор вместо текста во время загрузки
+                    if (isBoosting) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(26.dp),
+                            strokeWidth = 3.dp
+                        )
+                    } else {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("ПІДНЯТИ ЦІНУ (+10 ГРН)", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 
@@ -665,11 +690,15 @@ fun RateCourierDialog(orderId: Int, onDismiss: () -> Unit, onSubmit: (Int, Strin
 
 @Composable
 fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
-    // --- ВИПРАВЛЕННЯ БАГА З ЛОКАЛІЗАЦІЄЮ ---
-    // Якщо телефон українською чи російською, Double конвертується з комою (46,123),
-    // що ламає JavaScript масив. Примусово міняємо кому на крапку:
-    val latStr = lat.toString().replace(",", ".")
-    val lonStr = lon.toString().replace(",", ".")
+    val context = LocalContext.current
+
+    // Инициализация конфигурации osmdroid, как на экране создания заказа
+    remember {
+        Configuration.getInstance().load(context, PreferenceManager.getDefaultSharedPreferences(context))
+        Configuration.getInstance().userAgentValue = context.packageName
+    }
+
+    val geoPoint = GeoPoint(lat, lon)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -699,47 +728,36 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                     }
                 }
 
+                // Используем нативный MapView вместо проблемного WebView
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
-                    factory = { context ->
-                        WebView(context).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            webViewClient = WebViewClient()
-                            webChromeClient = android.webkit.WebChromeClient()
+                    factory = { ctx ->
+                        MapView(ctx).apply {
+                            setTileSource(TileSourceFactory.MAPNIK)
+                            setMultiTouchControls(true)
+                            controller.setZoom(17.0)
+                            controller.setCenter(geoPoint)
 
-                            val htmlData = """
-                                <!DOCTYPE html>
-                                <html>
-                                <head>
-                                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-                                    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-                                    <style>
-                                        body { margin: 0; padding: 0; }
-                                        #map { width: 100vw; height: 100vh; }
-                                    </style>
-                                </head>
-                                <body>
-                                    <div id="map"></div>
-                                    <script>
-                                        // Використовуємо очищені змінні з крапкою
-                                        var map = L.map('map').setView([$latStr, $lonStr], 16);
-                                        
-                                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                                            attribution: '&copy; OpenStreetMap contributors'
-                                        }).addTo(map);
-                                        
-                                        L.marker([$latStr, $lonStr]).addTo(map)
-                                            .bindPopup('Кур\'єр').openPopup();
-                                    </script>
-                                </body>
-                                </html>
-                            """.trimIndent()
-
-                            loadDataWithBaseURL("https://restify.site", htmlData, "text/html", "UTF-8", null)
+                            // Создаем маркер курьера
+                            val marker = Marker(this)
+                            marker.position = geoPoint
+                            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                            marker.title = "Кур'єр"
+                            overlays.add(marker)
                         }
+                    },
+                    update = { view ->
+                        // Плавно перемещаем камеру, если координаты обновятся
+                        view.controller.animateTo(geoPoint)
+
+                        // Удаляем старые маркеры и ставим новый
+                        view.overlays.removeAll { it is Marker }
+                        val marker = Marker(view)
+                        marker.position = geoPoint
+                        marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        marker.title = "Кур'єр"
+                        view.overlays.add(marker)
+                        view.invalidate()
                     }
                 )
             }
