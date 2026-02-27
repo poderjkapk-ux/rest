@@ -170,7 +170,7 @@ fun MainAppScreen(viewModel: MainViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("DAYBERG Партнер", fontWeight = FontWeight.Bold) },
+                title = { Text("ЗАКЛАД ", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary

@@ -39,7 +39,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     // Створення та показ системного сповіщення Android
     private fun sendNotification(title: String, messageBody: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            // Добавлен флаг FLAG_ACTIVITY_SINGLE_TOP, чтобы приложение не перезапускалось
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
 
         // PendingIntent для відкриття додатку по кліку на сповіщення

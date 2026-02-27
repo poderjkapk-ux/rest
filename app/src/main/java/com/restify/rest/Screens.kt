@@ -372,9 +372,10 @@ fun OrderCard(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        // ИСПРАВЛЕНИЕ 3: Заменили CircularProgressIndicator на зеленую галочку
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text("Очікує кур'єра", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Готово. Очікує кур'єра", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } else if (order.status == "delivered" && !isRated) {
@@ -663,6 +664,8 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                     factory = { context ->
                         WebView(context).apply {
                             settings.javaScriptEnabled = true
+                            // ИСПРАВЛЕНИЕ 2.1: Включаем DOM Storage для карты
+                            settings.domStorageEnabled = true
                             webViewClient = WebViewClient()
 
                             val htmlData = """
@@ -693,7 +696,8 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                                 </html>
                             """.trimIndent()
 
-                            loadDataWithBaseURL(null, htmlData, "text/html", "UTF-8", null)
+                            // ИСПРАВЛЕНИЕ 2.2: Добавляем базовый URL вместо null
+                            loadDataWithBaseURL("https://localhost", htmlData, "text/html", "UTF-8", null)
                         }
                     }
                 )
