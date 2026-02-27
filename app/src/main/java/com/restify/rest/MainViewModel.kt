@@ -24,6 +24,10 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
     private val _ratedOrders = MutableStateFlow<Set<Int>>(emptySet())
     val ratedOrders: StateFlow<Set<Int>> = _ratedOrders
 
+    // --- НОВІ ЗМІННІ ДЛЯ МІТОК ЧАТУ ---
+    private val _unreadChats = MutableStateFlow<Set<Int>>(emptySet())
+    val unreadChats: StateFlow<Set<Int>> = _unreadChats
+
     val isLoading = mutableStateOf(false)
     val errorMessage = mutableStateOf<String?>(null)
 
@@ -151,7 +155,38 @@ class MainViewModel(private val api: RestPartnerApi) : ViewModel() {
         }
     }
 
+    // --- НОВИЙ МЕТОД: ПІДТВЕРДЖЕННЯ ПОВЕРНЕННЯ КОШТІВ ---
+    fun confirmReturn(jobId: Int) {
+        viewModelScope.launch {
+            isLoading.value = true
+            try {
+                val response = api.confirmReturn(jobId)
+                if (response.isSuccessful) {
+                    fetchOrders() // Оновлюємо список замовлень після успішного підтвердження
+                } else {
+                    errorMessage.value = "Не вдалося підтвердити"
+                }
+            } catch (e: Exception) {
+                errorMessage.value = "Помилка мережі"
+            } finally {
+                isLoading.value = false
+            }
+        }
+    }
+    // ---------------------------------------------------
+
+    // --- МЕТОДИ ДЛЯ КЕРУВАННЯ МІТКАМИ ЧАТУ ---
+    fun markChatAsUnread(jobId: Int) {
+        _unreadChats.value = _unreadChats.value + jobId
+    }
+
+    fun markChatAsRead(jobId: Int) {
+        _unreadChats.value = _unreadChats.value - jobId
+    }
+    // -----------------------------------------
+
     fun loadChatHistory(jobId: Int) {
+        markChatAsRead(jobId) // Одразу знімаємо мітку непрочитаного, коли відкриваємо чат
         viewModelScope.launch {
             try {
                 val response = api.getChatHistory(jobId)

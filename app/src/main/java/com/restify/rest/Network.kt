@@ -14,6 +14,7 @@ data class PartnerOrder(
     @SerializedName("delivery_fee") val deliveryFee: Double,
     @SerializedName("payment_type") val paymentType: String, // prepaid, cash, buyout
     @SerializedName("is_ready") val isReady: Boolean,
+    @SerializedName("is_return_required") val isReturnRequired: Boolean, // Додано поле для повернення коштів
     val courier: CourierInfo?
 )
 
@@ -93,6 +94,13 @@ interface RestPartnerApi {
     suspend fun boostOrder(
         @Field("job_id") jobId: Int,
         @Field("amount") amount: Double = 10.0
+    ): Response<Unit>
+
+    // --- НОВИЙ ЕНДПОІНТ ДЛЯ ПІДТВЕРДЖЕННЯ ПОВЕРНЕННЯ КОШТІВ ---
+    @FormUrlEncoded
+    @POST("/api/partner/confirm_return")
+    suspend fun confirmReturn(
+        @Field("job_id") jobId: Int
     ): Response<Unit>
 
     // --- ЕНДПОІНТИ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---

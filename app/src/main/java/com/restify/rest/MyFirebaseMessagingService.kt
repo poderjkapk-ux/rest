@@ -17,8 +17,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         Log.d("FCM_TOKEN", "Новий токен: $token")
-        // Ми успішно перенесли відправку токена в MainActivity та MainViewModel!
-        // Тому тут ми його просто логуємо, щоб уникнути помилки відсутності RetrofitClient.
+        // Відправка токена на бекенд відбувається у MainViewModel
     }
 
     // Обробка вхідного пуш-сповіщення
@@ -33,13 +32,29 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
         // Відправляємо сигнал для оновлення списку замовлень в UI
         val updateIntent = Intent("com.restify.rest.UPDATE_ORDERS")
+
+        // Витягуємо job_id (якщо він переданий з бекенду)
+        val jobIdStr = remoteMessage.data["job_id"]
+        if (jobIdStr != null) {
+            try {
+                updateIntent.putExtra("job_id", jobIdStr.toInt())
+            } catch (e: Exception) {
+                Log.e("FCM", "Помилка парсингу job_id: $jobIdStr")
+            }
+        }
+
+        // Перевіряємо, чи це повідомлення з чату (слово "Чат" у заголовку)
+        if (title.contains("Чат", ignoreCase = true)) {
+            updateIntent.putExtra("is_chat", true)
+        }
+
         sendBroadcast(updateIntent)
     }
 
     // Створення та показ системного сповіщення Android
     private fun sendNotification(title: String, messageBody: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
-            // Добавлен флаг FLAG_ACTIVITY_SINGLE_TOP, чтобы приложение не перезапускалось
+            // Флаг FLAG_ACTIVITY_SINGLE_TOP, щоб додаток не перезапускався
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
 
@@ -53,7 +68,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
         val channelId = "partner_notifications"
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info) // Рекомендується замінити на іконку додатку, наприклад R.mipmap.ic_launcher
+            .setSmallIcon(android.R.drawable.ic_dialog_info) // Рекомендується замінити на вашу іконку (напр. R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(messageBody)
             .setAutoCancel(true) // Сповіщення зникне після кліку

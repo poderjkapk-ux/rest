@@ -11,6 +11,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -50,6 +51,7 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
     val orders by viewModel.orders.collectAsState()
     val chatHistory by viewModel.chatMessages.collectAsState()
     val ratedOrders by viewModel.ratedOrders.collectAsState(initial = emptySet())
+    val unreadChats by viewModel.unreadChats.collectAsState() // Стан для непрочитаних повідомлень
 
     var chatOrderId by remember { mutableStateOf<Int?>(null) }
     var rateOrderId by remember { mutableStateOf<Int?>(null) }
@@ -67,14 +69,20 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
     }
 
     // --- ФОНОВЕ ОНОВЛЕННЯ ---
-    // Автоматично стартуємо polling, коли екран відкритий, і зупиняємо, коли закритий
     DisposableEffect(Unit) {
         viewModel.startPolling()
 
-        // Залишаємо і BroadcastReceiver на випадок Push-повідомлень для миттєвої реакції
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 viewModel.fetchOrders()
+
+                // Обробка міток чату з Push-сповіщень
+                val isChat = intent?.getBooleanExtra("is_chat", false) ?: false
+                val incomingJobId = intent?.getIntExtra("job_id", -1) ?: -1
+
+                if (isChat && incomingJobId != -1) {
+                    viewModel.markChatAsUnread(incomingJobId)
+                }
             }
         }
         val filter = IntentFilter("com.restify.rest.UPDATE_ORDERS")
@@ -149,6 +157,7 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
                         OrderCard(
                             order = order,
                             isRated = ratedOrders.contains(order.id),
+                            hasUnreadChat = unreadChats.contains(order.id), // Передаємо мітку чату
                             onReadyClick = { viewModel.markOrderAsReady(order.id) },
                             onChatClick = {
                                 chatOrderId = order.id
@@ -164,7 +173,8 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
                                 )
                             },
                             onRateClick = { rateOrderId = order.id },
-                            onBoostClick = { viewModel.boostOrder(order.id) }
+                            onBoostClick = { viewModel.boostOrder(order.id) },
+                            onConfirmReturnClick = { viewModel.confirmReturn(order.id) } // Підтвердження повернення
                         )
                     }
                 }
@@ -237,11 +247,13 @@ fun EmptyStateView() {
 fun OrderCard(
     order: PartnerOrder,
     isRated: Boolean,
+    hasUnreadChat: Boolean,
     onReadyClick: () -> Unit,
     onChatClick: () -> Unit,
     onTrackClick: () -> Unit,
     onRateClick: () -> Unit,
-    onBoostClick: () -> Unit
+    onBoostClick: () -> Unit,
+    onConfirmReturnClick: () -> Unit
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -271,6 +283,7 @@ fun OrderCard(
                     "delivered" -> Triple("Доставлено", Color(0xFF2E7D32), Color(0xFFE8F5E9))
                     "pending" -> Triple("Очікує", Color(0xFFE65100), Color(0xFFFFF3E0))
                     "in_progress", "picked_up", "assigned" -> Triple("В дорозі", Color(0xFF1565C0), Color(0xFFE3F2FD))
+                    "returning" -> Triple("Повернення коштів", Color(0xFFD84315), Color(0xFFFFCCBC))
                     else -> Triple(order.status, Color.DarkGray, Color(0xFFF5F5F5))
                 }
 
@@ -347,6 +360,7 @@ fun OrderCard(
                             ActionIconButton(
                                 icon = Icons.Default.Email,
                                 color = Color(0xFF2196F3),
+                                hasBadge = hasUnreadChat, // Встановлюємо бейдж
                                 onClick = onChatClick
                             )
                             ActionIconButton(
@@ -365,7 +379,6 @@ fun OrderCard(
                 val interactionSource = remember { MutableInteractionSource() }
                 val isPressed by interactionSource.collectIsPressedAsState()
 
-                // Добавляем состояние загрузки для интерактивности
                 var isBoosting by remember { mutableStateOf(false) }
 
                 val scale by animateFloatAsState(
@@ -374,7 +387,6 @@ fun OrderCard(
                     label = "buttonScale"
                 )
 
-                // Сбрасываем крутилку, если заказ обновился (например, его забрали)
                 LaunchedEffect(order) {
                     isBoosting = false
                 }
@@ -400,7 +412,6 @@ fun OrderCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B), contentColor = Color.White),
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp, pressedElevation = 0.dp)
                 ) {
-                    // Показываем индикатор вместо текста во время загрузки
                     if (isBoosting) {
                         CircularProgressIndicator(
                             color = Color.White,
@@ -415,6 +426,7 @@ fun OrderCard(
                 }
             }
 
+            // Кнопка замовлення готове
             if (!order.isReady && order.status != "delivered" && order.courier != null) {
                 Button(
                     onClick = onReadyClick,
@@ -458,6 +470,24 @@ fun OrderCard(
                     Text("ОЦІНИТИ КУР'ЄРА", fontWeight = FontWeight.Bold)
                 }
             }
+
+            // Нова кнопка підтвердження повернення коштів
+            if (order.status == "returning" && order.isReturnRequired) {
+                Button(
+                    onClick = onConfirmReturnClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .padding(top = 8.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50), contentColor = Color.White),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("ПІДТВЕРДИТИ ПОВЕРНЕННЯ", fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -472,21 +502,35 @@ fun InfoRow(icon: ImageVector, text: String, iconTint: Color = Color.Gray) {
 }
 
 @Composable
-fun ActionIconButton(icon: ImageVector, color: Color, onClick: () -> Unit) {
-    Surface(
-        shape = CircleShape,
-        color = color.copy(alpha = 0.15f),
-        modifier = Modifier
-            .size(54.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = color,
-            modifier = Modifier.padding(14.dp)
-        )
+fun ActionIconButton(icon: ImageVector, color: Color, hasBadge: Boolean = false, onClick: () -> Unit) {
+    Box {
+        Surface(
+            shape = CircleShape,
+            color = color.copy(alpha = 0.15f),
+            modifier = Modifier
+                .size(54.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.padding(14.dp)
+            )
+        }
+
+        // Червона крапка (badge), якщо є нові повідомлення
+        if (hasBadge) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-2).dp, y = 2.dp)
+                    .size(14.dp)
+                    .background(Color.Red, CircleShape)
+                    .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+            )
+        }
     }
 }
 
@@ -692,7 +736,6 @@ fun RateCourierDialog(orderId: Int, onDismiss: () -> Unit, onSubmit: (Int, Strin
 fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
     val context = LocalContext.current
 
-    // Инициализация конфигурации osmdroid, как на экране создания заказа
     remember {
         Configuration.getInstance().load(context, PreferenceManager.getDefaultSharedPreferences(context))
         Configuration.getInstance().userAgentValue = context.packageName
@@ -728,7 +771,6 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                     }
                 }
 
-                // Используем нативный MapView вместо проблемного WebView
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -738,7 +780,6 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                             controller.setZoom(17.0)
                             controller.setCenter(geoPoint)
 
-                            // Создаем маркер курьера
                             val marker = Marker(this)
                             marker.position = geoPoint
                             marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
@@ -747,10 +788,8 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                         }
                     },
                     update = { view ->
-                        // Плавно перемещаем камеру, если координаты обновятся
                         view.controller.animateTo(geoPoint)
 
-                        // Удаляем старые маркеры и ставим новый
                         view.overlays.removeAll { it is Marker }
                         val marker = Marker(view)
                         marker.position = geoPoint
