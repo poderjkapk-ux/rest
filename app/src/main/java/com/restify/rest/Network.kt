@@ -87,6 +87,14 @@ interface RestPartnerApi {
         @Field("review") review: String
     ): Response<Unit>
 
+    // --- НОВИЙ ЕНДПОІНТ ДЛЯ ПІДНЯТТЯ ЦІНИ ДОСТАВКИ ---
+    @FormUrlEncoded
+    @POST("/api/partner/boost_order")
+    suspend fun boostOrder(
+        @Field("job_id") jobId: Int,
+        @Field("amount") amount: Double = 10.0
+    ): Response<Unit>
+
     // --- ЕНДПОІНТИ ДЛЯ ЧАТУ ТА ВІДСТЕЖЕННЯ ---
 
     @GET("/api/chat/history/{job_id}")

@@ -9,9 +9,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,8 +28,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -39,18 +45,29 @@ import androidx.compose.ui.window.DialogProperties
 fun PartnerDashboardScreen(viewModel: MainViewModel) {
     val orders by viewModel.orders.collectAsState()
     val chatHistory by viewModel.chatMessages.collectAsState()
-    // Стан для оцінених замовлень (обов'язково додайте _ratedOrders у MainViewModel, як я писав раніше)
     val ratedOrders by viewModel.ratedOrders.collectAsState(initial = emptySet())
 
     var chatOrderId by remember { mutableStateOf<Int?>(null) }
     var rateOrderId by remember { mutableStateOf<Int?>(null) }
-    var mapCoordinates by remember { mutableStateOf<Pair<Double, Double>?>(null) } // Координати для внутрішньої карти
-    var selectedTab by remember { mutableStateOf(0) } // 0 - Активні, 1 - Виконані
+    var mapCoordinates by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var selectedTab by remember { mutableStateOf(0) }
 
     val context = LocalContext.current
 
-    // Автоматичне оновлення списку при отриманні пуш-сповіщення
+    val errorMessage by viewModel.errorMessage
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+            viewModel.errorMessage.value = null
+        }
+    }
+
+    // --- ФОНОВЕ ОНОВЛЕННЯ ---
+    // Автоматично стартуємо polling, коли екран відкритий, і зупиняємо, коли закритий
     DisposableEffect(Unit) {
+        viewModel.startPolling()
+
+        // Залишаємо і BroadcastReceiver на випадок Push-повідомлень для миттєвої реакції
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 viewModel.fetchOrders()
@@ -62,12 +79,13 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
         } else {
             context.registerReceiver(receiver, filter)
         }
+
         onDispose {
+            viewModel.stopPolling()
             context.unregisterReceiver(receiver)
         }
     }
 
-    // Розділення списків замовлень
     val activeOrders = orders.filter { it.status != "delivered" && it.status != "cancelled" }
     val completedOrders = orders.filter { it.status == "delivered" || it.status == "cancelled" }
     val displayedOrders = if (selectedTab == 0) activeOrders else completedOrders
@@ -77,7 +95,6 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Шапка
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.primary,
@@ -100,7 +117,6 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Вкладки (Таби)
         TabRow(selectedTabIndex = selectedTab) {
             Tab(
                 selected = selectedTab == 0,
@@ -114,7 +130,6 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
             )
         }
 
-        // Контент
         Box(modifier = Modifier.fillMaxSize()) {
             if (viewModel.isLoading.value && orders.isEmpty()) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -139,13 +154,13 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
                                 viewModel.trackCourier(
                                     jobId = order.id,
                                     onSuccess = { lat, lon ->
-                                        // Відкриваємо карту всередині додатку
                                         mapCoordinates = Pair(lat, lon)
                                     },
                                     onError = { errorMsg -> viewModel.errorMessage.value = errorMsg }
                                 )
                             },
-                            onRateClick = { rateOrderId = order.id }
+                            onRateClick = { rateOrderId = order.id },
+                            onBoostClick = { viewModel.boostOrder(order.id) }
                         )
                     }
                 }
@@ -153,7 +168,6 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
         }
     }
 
-    // Діалоги
     if (chatOrderId != null) {
         ChatDialog(
             orderId = chatOrderId!!,
@@ -177,7 +191,6 @@ fun PartnerDashboardScreen(viewModel: MainViewModel) {
         )
     }
 
-    // Вікно з картою всередині додатку
     mapCoordinates?.let { (lat, lon) ->
         MapDialog(
             lat = lat,
@@ -223,9 +236,11 @@ fun OrderCard(
     onReadyClick: () -> Unit,
     onChatClick: () -> Unit,
     onTrackClick: () -> Unit,
-    onRateClick: () -> Unit
+    onRateClick: () -> Unit,
+    onBoostClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
 
     Card(
         modifier = Modifier
@@ -236,7 +251,6 @@ fun OrderCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Заголовок та статус
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -272,7 +286,6 @@ fun OrderCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Інформація про замовлення
             InfoRow(icon = Icons.Default.LocationOn, text = order.address)
             InfoRow(icon = Icons.Default.ShoppingCart, text = "Сума: ${order.orderPrice} ₴ (Дост: ${order.deliveryFee} ₴)")
 
@@ -289,7 +302,6 @@ fun OrderCard(
             }
             InfoRow(icon = paymentIcon, text = paymentText, iconTint = Color(0xFF4CAF50))
 
-            // Інформація про кур'єра
             AnimatedVisibility(visible = order.courier != null) {
                 Column {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.surfaceVariant)
@@ -313,7 +325,6 @@ fun OrderCard(
                         }
                     }
 
-                    // Кнопки взаємодії
                     if (order.status != "delivered" && order.status != "cancelled") {
                         Row(
                             modifier = Modifier
@@ -346,8 +357,39 @@ fun OrderCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Головні кнопки дій
-            // Кнопка з'являється ТІЛЬКИ якщо є кур'єр і замовлення не готове
+            if (order.status == "pending") {
+                val interactionSource = remember { MutableInteractionSource() }
+                val isPressed by interactionSource.collectIsPressedAsState()
+                val scale by animateFloatAsState(
+                    targetValue = if (isPressed) 0.95f else 1.0f,
+                    animationSpec = tween(durationMillis = 150),
+                    label = "buttonScale"
+                )
+
+                Button(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onBoostClick()
+                    },
+                    interactionSource = interactionSource,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .padding(bottom = 8.dp)
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B), contentColor = Color.White),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp, pressedElevation = 0.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("ПІДНЯТИ ЦІНУ (+10 ГРН)", fontWeight = FontWeight.Bold)
+                }
+            }
+
             if (!order.isReady && order.status != "delivered" && order.courier != null) {
                 Button(
                     onClick = onReadyClick,
@@ -372,14 +414,12 @@ fun OrderCard(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // ИСПРАВЛЕНИЕ 3: Заменили CircularProgressIndicator на зеленую галочку
                         Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50))
                         Spacer(modifier = Modifier.width(12.dp))
                         Text("Готово. Очікує кур'єра", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } else if (order.status == "delivered" && !isRated) {
-                // Кнопка оцінки не показується, якщо ми вже натиснули її
                 Button(
                     onClick = onRateClick,
                     modifier = Modifier
@@ -446,7 +486,6 @@ fun ChatDialog(
                 .fillMaxHeight(0.8f)
         ) {
             Column {
-                // Шапка чату
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.fillMaxWidth()
@@ -468,7 +507,6 @@ fun ChatDialog(
                     }
                 }
 
-                // Список повідомлень
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f)
@@ -514,7 +552,6 @@ fun ChatDialog(
                     }
                 }
 
-                // Поле вводу
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -626,9 +663,14 @@ fun RateCourierDialog(orderId: Int, onDismiss: () -> Unit, onSubmit: (Int, Strin
     }
 }
 
-// Нове вікно з інтерактивною картою всередині додатку (OpenStreetMap)
 @Composable
 fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
+    // --- ВИПРАВЛЕННЯ БАГА З ЛОКАЛІЗАЦІЄЮ ---
+    // Якщо телефон українською чи російською, Double конвертується з комою (46,123),
+    // що ламає JavaScript масив. Примусово міняємо кому на крапку:
+    val latStr = lat.toString().replace(",", ".")
+    val lonStr = lon.toString().replace(",", ".")
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -641,7 +683,6 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Заголовок вікна карти
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.fillMaxWidth()
@@ -658,15 +699,15 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                     }
                 }
 
-                // Вбудований WebView для відображення карти Leaflet.js (OpenStreetMap)
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
                         WebView(context).apply {
                             settings.javaScriptEnabled = true
-                            // ИСПРАВЛЕНИЕ 2.1: Включаем DOM Storage для карты
                             settings.domStorageEnabled = true
+                            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             webViewClient = WebViewClient()
+                            webChromeClient = android.webkit.WebChromeClient()
 
                             val htmlData = """
                                 <!DOCTYPE html>
@@ -683,21 +724,21 @@ fun MapDialog(lat: Double, lon: Double, onDismiss: () -> Unit) {
                                 <body>
                                     <div id="map"></div>
                                     <script>
-                                        var map = L.map('map').setView([$lat, $lon], 16);
+                                        // Використовуємо очищені змінні з крапкою
+                                        var map = L.map('map').setView([$latStr, $lonStr], 16);
                                         
                                         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                                             attribution: '&copy; OpenStreetMap contributors'
                                         }).addTo(map);
                                         
-                                        L.marker([$lat, $lon]).addTo(map)
+                                        L.marker([$latStr, $lonStr]).addTo(map)
                                             .bindPopup('Кур\'єр').openPopup();
                                     </script>
                                 </body>
                                 </html>
                             """.trimIndent()
 
-                            // ИСПРАВЛЕНИЕ 2.2: Добавляем базовый URL вместо null
-                            loadDataWithBaseURL("https://localhost", htmlData, "text/html", "UTF-8", null)
+                            loadDataWithBaseURL("https://restify.site", htmlData, "text/html", "UTF-8", null)
                         }
                     }
                 )
